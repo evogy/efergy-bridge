@@ -36,7 +36,7 @@ This Serverless project deployes three distinct Lambda functions:
 
 4. Run `sls deploy` 
 
-[this repo]:https://bitbucket.org/evogy/sqlite-lambda-layer/src/master/
+[this repo]:https://github.com/evogy/sqlite-lambda-layer/tree/master
 
 To test on local pc you have to:
 
