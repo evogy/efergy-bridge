@@ -1,0 +1,11 @@
+# package directories
+.venv
+node_modules
+__pycache__
+vendor
+bin
+
+# Serverless directories
+.serverless
+.DS_Store
+.vscode

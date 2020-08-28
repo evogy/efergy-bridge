@@ -1,0 +1,146 @@
+service: efergy-driver
+
+frameworkVersion: ">=1.28.0 <2.0.0"
+
+plugins:
+  - serverless-python-requirements
+  - serverless-wsgi
+
+custom:
+  tableName: efergy_plants
+  authTableName: efergy_auth_tokens
+  pythonRequirements:
+    dockerizePip: non-linux
+  wsgi:
+    app: app.app
+    packRequirements: false
+  authorizer:
+    users:
+      name: authorizerUser
+      type: TOKEN
+      identitySource: method.request.header.Authorization
+      identityValidationExpression: Bearer (.*)
+
+provider:
+  name: aws
+  runtime: python3.6
+  stage: prod
+  region: eu-west-1
+  profile: ${env:AWS_PROFILE}
+  
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - ssm:GetParameter
+        - ssm:GetParameters
+        - ssm:DescribeDocument
+        - "logs:CreateLogGroup"
+        - "logs:CreateLogStream"
+        - "logs:PutLogEvents"
+      Resource: "*"
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - !GetAtt PlantsDynamoDbTable.Arn
+        - !GetAtt AuthDynamoDbTable.Arn
+    - Effect: Allow
+      Action:
+        - lambda:InvokeFunction
+      Resource: "*"
+
+  environment:
+    API_URL: http://www.energyhive.com/mobile_proxy/getCurrentValuesSummary?token={api_token}
+    QUEUE_NAME: simon-queue
+    RABBIT_USER: /amqp/rabbit_user
+    RABBIT_PASS: /amqp/rabbit_pass
+    RABBIT_HOST: /amqp/rabbit_host
+    PLANTS_TABLE: ${self:custom.tableName}
+    AUTH_TABLE_NAME: ${self:custom.authTableName}
+    
+package:
+  exclude:
+    - requirements.txt
+    - .git
+    - .venv
+    - .serverless
+    - node_modules
+    - package-log.json
+    - package.json
+    - serverless.yml
+    - vendor
+    - .gitignore
+    - README.md
+
+functions:
+  authorizerUser:
+    handler: authorizer.handler
+    description: Manage authorization for the efergy APIs
+    layers:
+      - arn:aws:lambda:eu-west-1:645216544525:layer:sqlitePython36:1
+    timeout: 60
+  worker:
+    handler: worker.handler
+    description: Send data to RabbitMQ from efergy installations every 5 minutes
+    layers:
+      - arn:aws:lambda:eu-west-1:645216544525:layer:sqlitePython36:1
+    timeout: 300
+    events:
+      - schedule:
+          rate: rate(5 minutes)
+          name: efergy-scheduled-event
+  webapi:
+    handler: wsgi_handler.handler
+    description: Manage the API endpoints for CRUD operations
+    layers:
+      - arn:aws:lambda:eu-west-1:645216544525:layer:sqlitePython36:1
+    environment:
+      WORKER_LAMBDA_NAME: ${self:service}-prod-worker
+    events:
+      - http:
+          path: /
+          method: any
+          authorizer: ${self:custom.authorizer.users}
+          cors: true
+      - http:
+          path: "{proxy+}"
+          method: any
+          authorizer: ${self:custom.authorizer.users}
+          cors: true
+
+resources:
+  Resources:
+    PlantsDynamoDbTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Retain
+      Properties:
+        TableName: ${self:custom.tableName}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+    AuthDynamoDbTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Retain
+      Properties:
+        TableName: ${self:custom.authTableName}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
